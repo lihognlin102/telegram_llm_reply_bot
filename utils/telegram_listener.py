@@ -7,6 +7,13 @@ import logging
 import os
 import sys
 from pathlib import Path
+
+# 添加项目根目录到 Python 路径（支持从任何目录运行）
+_file_path = Path(__file__).resolve()
+_project_root = _file_path.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 from telethon import TelegramClient, events
 from telethon.errors import (
     SessionPasswordNeededError, 
