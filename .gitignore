@@ -1,0 +1,110 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+.conda/
+.python-version
+
+# =========================
+# Packaging / build
+# =========================
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =========================
+# Installer logs
+# =========================
+pip-log.txt
+pip-delete-this-directory.txt
+
+# =========================
+# Unit test / coverage
+# =========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cover/
+*.cover
+*.py,cover
+
+# =========================
+# Type checker / linter
+# =========================
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# =========================
+# Jupyter / IPython
+# =========================
+.ipynb_checkpoints/
+.ipython/
+profile_default/
+
+# =========================
+# IDEs
+# =========================
+.vscode/
+.idea/
+*.iml
+
+# =========================
+# Logs / runtime files
+# =========================
+*.log
+logs/
+*.pid
+*.pid.lock
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Local config / secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Project specific (optional)
+# =========================
+data/
+sessions/
+cache/
+tmp/
+work/
