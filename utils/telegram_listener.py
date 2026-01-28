@@ -7,13 +7,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-
-# 添加项目根目录到 Python 路径（支持从任何目录运行）
-_file_path = Path(__file__).resolve()
-_project_root = _file_path.parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
-
 from telethon import TelegramClient, events
 from telethon.errors import (
     SessionPasswordNeededError, 
@@ -23,7 +16,7 @@ from telethon.errors import (
     PhoneCodeExpiredError
 )
 from config.config import (
-    API_ID, API_HASH, PHONE_NUMBER, MONITOR_GROUPS, 
+    API_ID, API_HASH, PHONE_NUMBER, MONITOR_GROUPS, LLM_ENABLED,
     get_session_file, list_available_sessions, validate_config
 )
 from utils.llm_util import get_llm_instance
@@ -364,6 +357,11 @@ class TelegramListener:
             
             # 过滤条件4: 忽略空消息
             if message_length == 0:
+                return
+            
+            # 检查 LLM 功能是否启用
+            if not LLM_ENABLED:
+                logger.debug("LLM 自动回复功能未启用，跳过回复")
                 return
             
             logger.info(f"📝 准备生成回复，消息长度: {message_length}")

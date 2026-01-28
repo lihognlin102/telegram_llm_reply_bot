@@ -3,15 +3,7 @@ Session 管理工具
 用于列出、删除和管理 Telegram session 文件
 """
 import os
-import sys
 from pathlib import Path
-
-# 添加项目根目录到 Python 路径（支持从任何目录运行）
-_file_path = Path(__file__).resolve()
-_project_root = _file_path.parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
-
 from config.config import SESSION_DIR, list_available_sessions
 
 def list_sessions():
