@@ -23,8 +23,13 @@ class MultiAccountSigninManager:
         self.schedulers = {}  # {session_name: SigninScheduler}
         self.is_running = False
     
-    async def start(self):
-        """启动所有账号的签到任务"""
+    async def start(self, exclude_session=None):
+        """
+        启动所有账号的签到任务
+        
+        Args:
+            exclude_session: 要排除的 session 名称（通常是被 TelegramListener 使用的 session，避免数据库锁定）
+        """
         if not SIGNIN_ENABLED:
             logger.info("定时签到功能未启用")
             return
@@ -33,6 +38,16 @@ class MultiAccountSigninManager:
         sessions = list_available_sessions()
         if not sessions:
             logger.warning("未找到任何 session 文件，无法启动签到任务")
+            return
+        
+        # 排除已被监听器使用的 session（避免数据库锁定）
+        if exclude_session:
+            sessions = [s for s in sessions if s != exclude_session]
+            if exclude_session in list_available_sessions():
+                logger.info(f"ℹ️  跳过 session '{exclude_session}'（已被消息监听器使用，将使用监听器的客户端进行签到）")
+        
+        if not sessions:
+            logger.info("ℹ️  没有其他 session 需要启动签到任务")
             return
         
         logger.info(f"📋 找到 {len(sessions)} 个 session，准备启动签到任务...")

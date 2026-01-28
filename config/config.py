@@ -21,7 +21,7 @@ MONITOR_GROUPS = [g.strip() for g in MONITOR_GROUPS if g.strip()]
 
 # Session 文件路径 - 使用绝对路径，保存在项目根目录的 sessions 文件夹中
 SESSION_DIR = Path(__file__).parent.parent / 'sessions'
-SESSION_DIR.mkdir(exist_ok=True)  # 确保目录存在
+SESSION_DIR.mkdir(exist_ok=True, mode=0o755)  # 确保目录存在，设置权限
 
 # 默认 session 名称（如果未指定）
 DEFAULT_SESSION_NAME = os.getenv('SESSION_FILE', 'telegram_session')

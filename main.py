@@ -5,16 +5,24 @@
 import asyncio
 import logging
 import sys
+import os
+from pathlib import Path
 from utils.telegram_listener import TelegramListener
 from utils.multi_account_signin import MultiAccountSigninManager
 from config.config import SIGNIN_ENABLED
 
-# 配置日志
+# 获取项目根目录
+PROJECT_ROOT = Path(__file__).parent.absolute()
+LOG_DIR = PROJECT_ROOT / 'log'
+LOG_DIR.mkdir(exist_ok=True, mode=0o755)
+
+# 配置日志 - 使用绝对路径
+LOG_FILE = LOG_DIR / 'telegram_bot.log'
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('log/telegram_bot.log', encoding='utf-8'),
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -50,11 +58,26 @@ class TelegramBotApplication:
             
             # 启动多账号签到任务（如果启用）
             if SIGNIN_ENABLED:
+                # 为监听器使用的账号也启动签到任务（使用监听器已有的客户端，避免数据库锁定）
+                from utils.signin_scheduler import SigninScheduler
+                from config.config import MONITOR_GROUPS
+                
+                if MONITOR_GROUPS:
+                    self.listener.signin_scheduler = SigninScheduler(self.listener.client, MONITOR_GROUPS)
+                    await self.listener.signin_scheduler.start()
+                    logger.info(f"✅ 监听器账号 '{self.listener.session_name}' 的签到任务已启动")
+                
+                # 为其他账号启动签到任务（排除监听器使用的 session，避免数据库锁定）
                 self.signin_manager = MultiAccountSigninManager()
-                await self.signin_manager.start()
+                await self.signin_manager.start(exclude_session=self.listener.session_name)
                 account_count = self.signin_manager.get_account_count()
                 if account_count > 0:
-                    logger.info(f"✅ 已为 {account_count} 个账号启动定时签到任务")
+                    logger.info(f"✅ 已为 {account_count} 个其他账号启动定时签到任务")
+                
+                # 统计总账号数
+                total_count = (1 if self.listener.signin_scheduler else 0) + account_count
+                if total_count > 0:
+                    logger.info(f"✅ 总计已为 {total_count} 个账号启动定时签到任务")
                 else:
                     logger.info("ℹ️  未找到已登录的账号，跳过签到任务")
             else:
@@ -65,11 +88,16 @@ class TelegramBotApplication:
             logger.info("=" * 60)
             logger.info("📱 消息监听: 运行中")
             logger.info("🤖 LLM 自动回复: 运行中")
-            if SIGNIN_ENABLED and self.signin_manager:
-                account_count = self.signin_manager.get_account_count()
-                if account_count > 0:
-                    logger.info(f"⏰ 定时签到: 运行中 ({account_count} 个账号)")
-                    logger.info(f"   账号列表: {', '.join(self.signin_manager.get_account_list())}")
+            if SIGNIN_ENABLED:
+                account_list = []
+                if self.listener.signin_scheduler:
+                    account_list.append(self.listener.session_name)
+                if self.signin_manager:
+                    account_list.extend(self.signin_manager.get_account_list())
+                if account_list:
+                    total_count = len(account_list)
+                    logger.info(f"⏰ 定时签到: 运行中 ({total_count} 个账号)")
+                    logger.info(f"   账号列表: {', '.join(account_list)}")
             logger.info("=" * 60)
             logger.info("按 Ctrl+C 停止应用")
             logger.info("=" * 60)
@@ -87,6 +115,10 @@ class TelegramBotApplication:
         """停止应用"""
         try:
             logger.info("正在关闭应用...")
+            
+            # 停止监听器的签到任务
+            if self.listener and self.listener.signin_scheduler:
+                await self.listener.signin_scheduler.stop()
             
             # 停止多账号签到管理器
             if self.signin_manager:
@@ -119,9 +151,8 @@ async def main():
 
 
 if __name__ == '__main__':
-    # 确保日志目录存在
-    import os
-    os.makedirs('log', exist_ok=True)
+    # 切换到项目根目录（确保相对路径正确）
+    os.chdir(PROJECT_ROOT)
     
     try:
         asyncio.run(main())

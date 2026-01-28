@@ -5,6 +5,7 @@ Telegram 消息监听模块
 import asyncio
 import logging
 import os
+import sys
 from pathlib import Path
 from telethon import TelegramClient, events
 from telethon.errors import (
@@ -44,36 +45,48 @@ class TelegramListener:
     def _select_or_create_session(self):
         """选择或创建 session"""
         available_sessions = list_available_sessions()
+        is_interactive = sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else True
         
         if available_sessions:
-            print("\n可用的 Session 列表:")
-            for idx, session in enumerate(available_sessions, 1):
-                print(f"  {idx}. {session}")
-            print(f"  {len(available_sessions) + 1}. 创建新的 Session")
-            
-            choice = input(f"\n请选择 (1-{len(available_sessions) + 1})，或直接输入新的 Session 名称: ").strip()
-            
-            # 检查是否是数字选择
-            if choice.isdigit():
-                choice_num = int(choice)
-                if 1 <= choice_num <= len(available_sessions):
-                    self.session_name = available_sessions[choice_num - 1]
-                    logger.info(f"选择使用已有 Session: {self.session_name}")
-                elif choice_num == len(available_sessions) + 1:
-                    # 创建新的
-                    self.session_name = input("请输入新 Session 的名称: ").strip() or 'telegram_session'
-                    logger.info(f"创建新 Session: {self.session_name}")
+            if is_interactive:
+                print("\n可用的 Session 列表:")
+                for idx, session in enumerate(available_sessions, 1):
+                    print(f"  {idx}. {session}")
+                print(f"  {len(available_sessions) + 1}. 创建新的 Session")
+                
+                choice = input(f"\n请选择 (1-{len(available_sessions) + 1})，或直接输入新的 Session 名称: ").strip()
+                
+                # 检查是否是数字选择
+                if choice.isdigit():
+                    choice_num = int(choice)
+                    if 1 <= choice_num <= len(available_sessions):
+                        self.session_name = available_sessions[choice_num - 1]
+                        logger.info(f"选择使用已有 Session: {self.session_name}")
+                    elif choice_num == len(available_sessions) + 1:
+                        # 创建新的
+                        self.session_name = input("请输入新 Session 的名称: ").strip() or 'telegram_session'
+                        logger.info(f"创建新 Session: {self.session_name}")
+                    else:
+                        logger.warning("无效选择，使用默认 Session 名称")
+                        self.session_name = 'telegram_session'
                 else:
-                    logger.warning("无效选择，使用默认 Session 名称")
-                    self.session_name = 'telegram_session'
+                    # 直接输入名称
+                    self.session_name = choice or 'telegram_session'
+                    logger.info(f"使用 Session 名称: {self.session_name}")
             else:
-                # 直接输入名称
-                self.session_name = choice or 'telegram_session'
-                logger.info(f"使用 Session 名称: {self.session_name}")
+                # 非交互式环境（如 systemd 服务），使用第一个 session
+                logger.info("非交互式环境，自动使用第一个 session")
+                self.session_name = available_sessions[0]
+                logger.info(f"选择使用已有 Session: {self.session_name}")
         else:
-            # 没有已有 session，让用户输入名称
-            print("\n未找到已有 Session，需要创建新的。")
-            self.session_name = input("请输入 Session 名称（直接回车使用默认名称 'telegram_session'）: ").strip() or 'telegram_session'
+            # 没有已有 session
+            if is_interactive:
+                print("\n未找到已有 Session，需要创建新的。")
+                self.session_name = input("请输入 Session 名称（直接回车使用默认名称 'telegram_session'）: ").strip() or 'telegram_session'
+            else:
+                # 非交互式环境，使用默认名称
+                self.session_name = 'telegram_session'
+                logger.info("非交互式环境，使用默认 Session 名称")
             logger.info(f"创建新 Session: {self.session_name}")
         
         # 设置 session 文件路径
@@ -91,18 +104,26 @@ class TelegramListener:
                 self._select_or_create_session()
             
             # 检查是否已有 session 文件
-            session_exists = os.path.exists(self.session_file) or os.path.exists(self.session_file + '.session')
+            session_path = Path(self.session_file)
+            session_exists = session_path.exists() or session_path.with_suffix('.session').exists()
             if session_exists:
                 logger.info(f"发现已存在的 session 文件: {self.session_file}")
             
             # 确定要使用的手机号（如果 session 名称是手机号，优先使用）
             phone_to_use = PHONE_NUMBER
+            is_interactive = sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else True
             if self.session_name and (self.session_name.startswith('+') or self.session_name.replace(' ', '').isdigit()):
-                # Session 名称看起来像手机号，询问是否使用
-                use_session_as_phone = input(f"检测到 Session 名称 '{self.session_name}' 可能是手机号，是否使用它登录？(Y/n): ").strip().lower()
-                if use_session_as_phone != 'n':
+                # Session 名称看起来像手机号
+                if is_interactive:
+                    # 交互式环境，询问是否使用
+                    use_session_as_phone = input(f"检测到 Session 名称 '{self.session_name}' 可能是手机号，是否使用它登录？(Y/n): ").strip().lower()
+                    if use_session_as_phone != 'n':
+                        phone_to_use = self.session_name
+                        logger.info(f"使用 Session 名称作为手机号: {phone_to_use}")
+                else:
+                    # 非交互式环境，自动使用 session 名称作为手机号
                     phone_to_use = self.session_name
-                    logger.info(f"使用 Session 名称作为手机号: {phone_to_use}")
+                    logger.info(f"非交互式环境，自动使用 Session 名称作为手机号: {phone_to_use}")
             
             # 先连接客户端（必须在使用前连接）
             logger.info("正在连接 Telegram...")
@@ -137,6 +158,11 @@ class TelegramListener:
                     
                     # 请求输入验证码（支持重试）
                     max_retries = 3
+                    is_interactive = sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else True
+                    if not is_interactive:
+                        logger.error("非交互式环境无法输入验证码，请先使用交互式方式登录")
+                        raise ValueError("非交互式环境需要已登录的 session")
+                    
                     for attempt in range(max_retries):
                         try:
                             code = input(f'请输入 Telegram 发送的验证码 (尝试 {attempt + 1}/{max_retries}): ').strip()
@@ -324,7 +350,12 @@ class TelegramListener:
                 logger.debug(f"消息长度 {message_length} >= 15，忽略处理")
                 return
             
-            # 过滤条件3: 忽略空消息
+            # 过滤条件3: 忽略包含"签到"关键词的消息
+            if "签到" in message_text:
+                logger.debug("消息包含'签到'关键词，忽略处理")
+                return
+            
+            # 过滤条件4: 忽略空消息
             if message_length == 0:
                 return
             
