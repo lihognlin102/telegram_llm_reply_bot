@@ -16,7 +16,7 @@ from telethon.errors import (
     PhoneCodeExpiredError
 )
 from config.config import (
-    API_ID, API_HASH, PHONE_NUMBER, MONITOR_GROUPS, 
+    API_ID, API_HASH, PHONE_NUMBER, MONITOR_GROUPS, LLM_ENABLED,
     get_session_file, list_available_sessions, validate_config
 )
 from utils.llm_util import get_llm_instance
@@ -329,6 +329,10 @@ class TelegramListener:
         包括消息过滤、LLM 调用和自动回复
         """
         try:
+            # 如果 LLM 功能已禁用，直接返回
+            if not LLM_ENABLED:
+                return
+            
             # 获取消息文本
             message_text = message.message
             if not message_text:
@@ -525,9 +529,8 @@ async def main():
                 await listener.signin_scheduler.stop()
             
             if listener.client and listener.client.is_connected():
-                # telethon 会自动保存 session，无需手动保存
-                await listener.client.disconnect()
-                logger.info("已断开连接")
+              await listener.client.disconnect()
+            logger.info("已断开连接")
         except Exception as e:
             logger.error(f"关闭连接时出错: {e}")
 

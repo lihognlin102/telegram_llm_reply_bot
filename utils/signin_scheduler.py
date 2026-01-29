@@ -26,6 +26,9 @@ class SigninScheduler:
         self.monitor_groups = monitor_groups or MONITOR_GROUPS
         self.task = None
         self.is_running = False
+        self.start_time = None  # 记录启动时间
+        self.first_signin_done = False  # 标记是否已完成第一次签到
+        self.daily_signin_time = None  # 记录每天签到的时间
     
     async def start(self):
         """启动签到调度器"""
@@ -42,8 +45,13 @@ class SigninScheduler:
             return
         
         self.is_running = True
+        self.start_time = datetime.now()  # 记录启动时间
+        self.first_signin_done = False
+        self.daily_signin_time = None
         self.task = asyncio.create_task(self._scheduler_loop())
-        logger.info(f"定时签到任务已启动，每天 {SIGNIN_TIME} 执行")
+        # 计算第一次签到时间（启动时间 + 60秒）
+        first_signin_time = self.start_time + timedelta(seconds=60)
+        logger.info(f"定时签到任务已启动，首次签到时间: {first_signin_time.strftime('%Y-%m-%d %H:%M:%S')}，之后每天此时执行")
     
     async def stop(self):
         """停止签到调度器"""
@@ -59,29 +67,47 @@ class SigninScheduler:
     async def _scheduler_loop(self):
         """调度器主循环"""
         try:
-            # 解析签到时间
-            hour, minute = map(int, SIGNIN_TIME.split(':'))
-            signin_time_obj = time(hour, minute)
-            
             while self.is_running:
-                # 计算到下次签到的时间
                 now = datetime.now()
-                target_time = datetime.combine(now.date(), signin_time_obj)
                 
-                # 如果今天的时间已过，设置为明天
-                if target_time <= now:
-                    target_time += timedelta(days=1)
-                
-                # 计算等待时间（秒）
-                wait_seconds = (target_time - now).total_seconds()
-                
-                logger.info(f"⏰ 下次签到时间: {target_time.strftime('%Y-%m-%d %H:%M:%S')}，等待 {wait_seconds/3600:.1f} 小时")
-                
-                # 等待到签到时间
-                await asyncio.sleep(wait_seconds)
-                
-                # 执行签到
-                await self._send_signin_messages()
+                if not self.first_signin_done:
+                    # 第一次签到：启动后60秒
+                    target_time = self.start_time + timedelta(seconds=60)
+                    wait_seconds = (target_time - now).total_seconds()
+                    
+                    if wait_seconds > 0:
+                        logger.info(f"⏰ 首次签到时间: {target_time.strftime('%Y-%m-%d %H:%M:%S')}，等待 {wait_seconds:.1f} 秒")
+                        await asyncio.sleep(wait_seconds)
+                    else:
+                        # 如果已经过了60秒，立即执行
+                        logger.info("⏰ 启动已超过60秒，立即执行首次签到")
+                    
+                    # 执行第一次签到
+                    await self._send_signin_messages()
+                    self.first_signin_done = True
+                    
+                    # 记录第一次签到的时间（用于后续每天执行）
+                    self.daily_signin_time = target_time.time()
+                    logger.info(f"✅ 首次签到完成，之后每天 {self.daily_signin_time.strftime('%H:%M:%S')} 执行签到")
+                else:
+                    # 后续签到：每天按照第一次签到的时间执行
+                    signin_time_obj = self.daily_signin_time
+                    target_time = datetime.combine(now.date(), signin_time_obj)
+                    
+                    # 如果今天的时间已过，设置为明天
+                    if target_time <= now:
+                        target_time += timedelta(days=1)
+                    
+                    # 计算等待时间（秒）
+                    wait_seconds = (target_time - now).total_seconds()
+                    
+                    logger.info(f"⏰ 下次签到时间: {target_time.strftime('%Y-%m-%d %H:%M:%S')}，等待 {wait_seconds/3600:.1f} 小时")
+                    
+                    # 等待到签到时间
+                    await asyncio.sleep(wait_seconds)
+                    
+                    # 执行签到
+                    await self._send_signin_messages()
                 
         except asyncio.CancelledError:
             logger.info("定时签到任务已取消")

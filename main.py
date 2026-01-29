@@ -87,7 +87,11 @@ class TelegramBotApplication:
             logger.info("✅ 所有功能已启动完成")
             logger.info("=" * 60)
             logger.info("📱 消息监听: 运行中")
-            logger.info("🤖 LLM 自动回复: 运行中")
+            from config.config import LLM_ENABLED
+            if LLM_ENABLED:
+                logger.info("🤖 LLM 自动回复: 运行中")
+            else:
+                logger.info("🤖 LLM 自动回复: 已禁用")
             if SIGNIN_ENABLED:
                 account_list = []
                 if self.listener.signin_scheduler:
@@ -147,7 +151,17 @@ async def main():
     except Exception as e:
         logger.error(f"应用异常退出: {e}")
     finally:
-        await app.stop()
+        try:
+            # 停止签到调度器
+            if app.listener and app.listener.signin_scheduler:
+                await app.listener.signin_scheduler.stop()
+            # 断开连接
+            if app.listener and app.listener.client and app.listener.client.is_connected():
+                # telethon 会自动保存 session，无需手动保存
+                await app.listener.client.disconnect()
+                logger.info("已断开连接")
+        except Exception as e:
+            logger.error(f"关闭连接时出错: {e}", exc_info=True)
 
 
 if __name__ == '__main__':
