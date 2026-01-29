@@ -16,7 +16,7 @@ from telethon.errors import (
     PhoneCodeExpiredError
 )
 from config.config import (
-    API_ID, API_HASH, PHONE_NUMBER, MONITOR_GROUPS, LLM_ENABLED,
+    API_ID, API_HASH, PHONE_NUMBER, MONITOR_GROUPS, 
     get_session_file, list_available_sessions, validate_config
 )
 from utils.llm_util import get_llm_instance
@@ -357,11 +357,6 @@ class TelegramListener:
             
             # 过滤条件4: 忽略空消息
             if message_length == 0:
-                return
-            
-            # 检查 LLM 功能是否启用
-            if not LLM_ENABLED:
-                logger.debug("LLM 自动回复功能未启用，跳过回复")
                 return
             
             logger.info(f"📝 准备生成回复，消息长度: {message_length}")

@@ -27,7 +27,6 @@ SESSION_DIR.mkdir(exist_ok=True, mode=0o755)  # 确保目录存在，设置权�
 DEFAULT_SESSION_NAME = os.getenv('SESSION_FILE', 'telegram_session')
 
 # LLM 配置（阿里云百炼）
-LLM_ENABLED = os.getenv('LLM_ENABLED', 'true').lower() in ('true', '1', 'yes')  # LLM 自动回复开关
 LLM_API_KEY = os.getenv('LLM_API_KEY', '')
 LLM_BASE_URL = os.getenv('LLM_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1')
 LLM_MODEL = os.getenv('LLM_MODEL', 'qwen-plus')  # 默认使用 qwen-plus

@@ -87,11 +87,7 @@ class TelegramBotApplication:
             logger.info("✅ 所有功能已启动完成")
             logger.info("=" * 60)
             logger.info("📱 消息监听: 运行中")
-            from config.config import LLM_ENABLED
-            if LLM_ENABLED:
-                logger.info("🤖 LLM 自动回复: 运行中")
-            else:
-                logger.info("🤖 LLM 自动回复: 已禁用")
+            logger.info("🤖 LLM 自动回复: 运行中")
             if SIGNIN_ENABLED:
                 account_list = []
                 if self.listener.signin_scheduler:
