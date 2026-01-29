@@ -37,6 +37,17 @@ SIGNIN_ENABLED = os.getenv('SIGNIN_ENABLED', 'true').lower() in ('true', '1', 'y
 SIGNIN_TIME = os.getenv('SIGNIN_TIME', '12:00')  # 签到时间，格式：HH:MM
 SIGNIN_MESSAGE = os.getenv('SIGNIN_MESSAGE', '签到')  # 签到消息内容
 
+# 回复计数配置
+MAX_REPLIES_PER_ACCOUNT = int(os.getenv('MAX_REPLIES_PER_ACCOUNT', '120'))  # 每个账号最大回复数
+
+# MySQL 数据库配置
+DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_PORT = int(os.getenv('DB_PORT', '3306'))
+DB_USER = os.getenv('DB_USER', 'root')
+DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+DB_NAME = os.getenv('DB_NAME', 'telegram_bot')
+DB_CHARSET = os.getenv('DB_CHARSET', 'utf8mb4')
+
 def get_session_file(session_name=None):
     """获取 session 文件路径"""
     if session_name is None:

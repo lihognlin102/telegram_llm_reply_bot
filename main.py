@@ -8,7 +8,7 @@ import sys
 import os
 from pathlib import Path
 from utils.telegram_listener import TelegramListener
-from utils.multi_account_signin import MultiAccountSigninManager
+from utils.account_pool import AccountPool
 from config.config import SIGNIN_ENABLED
 
 # 获取项目根目录
@@ -41,7 +41,7 @@ class TelegramBotApplication:
         """
         self.session_name = session_name
         self.listener = None
-        self.signin_manager = None
+        self.account_pool = None  # 账号池（用于轮询回复）
     
     async def start(self):
         """启动应用"""
@@ -50,36 +50,68 @@ class TelegramBotApplication:
             logger.info("🚀 Telegram 机器人应用启动中...")
             logger.info("=" * 60)
             
-            # 初始化监听器
-            self.listener = TelegramListener(session_name=self.session_name)
+            # 先初始化账号池（包含所有账号）
+            self.account_pool = AccountPool()
+            account_count = await self.account_pool.initialize()
             
-            # 启动监听器（这会连接 Telegram 并启动消息监听）
-            await self.listener.start()
+            if account_count == 0:
+                logger.error("❌ 未找到任何可用账号，无法启动")
+                raise ValueError("未找到任何可用账号")
+            
+            logger.info(f"✅ 账号池已初始化，共 {account_count} 个账号")
+            # 显示账号状态
+            account_info = self.account_pool.get_account_info()
+            for session_name, current_count, max_count, can_reply in account_info:
+                status = "✅ 可用" if can_reply else "⛔ 已满"
+                logger.info(f"   {status} - {session_name}: {current_count}/{max_count}")
+            
+            # 初始化监听器（从账号池中选择第一个账号作为监听器）
+            # 如果通过命令行参数指定了 session_name，则使用指定的；否则使用账号池中的第一个
+            if self.session_name:
+                # 检查指定的 session 是否在账号池中
+                listener_account = self.account_pool.get_account_by_session(self.session_name)
+                if not listener_account:
+                    logger.warning(f"⚠️  指定的账号 '{self.session_name}' 不在账号池中，将使用账号池中的第一个账号")
+                    if len(self.account_pool.accounts) > 0:
+                        listener_account = self.account_pool.accounts[0]
+                    else:
+                        raise ValueError("账号池为空，无法启动监听器")
+                else:
+                    logger.info(f"✅ 使用指定的账号作为监听器: {self.session_name}")
+            else:
+                # 使用账号池中的第一个账号作为监听器
+                if len(self.account_pool.accounts) > 0:
+                    listener_account = self.account_pool.accounts[0]
+                    logger.info(f"✅ 使用账号池中的第一个账号作为监听器")
+                else:
+                    raise ValueError("账号池为空，无法启动监听器")
+            
+            listener_session_name, listener_client, listener_reply_counter = listener_account
+            
+            # 初始化监听器（复用账号池中的客户端）
+            self.listener = TelegramListener(session_name=listener_session_name, account_pool=self.account_pool)
+            self.listener.client = listener_client
+            self.listener.reply_counter = listener_reply_counter
+            
+            logger.info(f"✅ 监听器使用账号: {listener_session_name}")
+            
+            # 启动监听器（注册消息处理器，但不连接，因为客户端已经在账号池中连接了）
+            await self.listener.start_with_existing_client()
             
             # 启动多账号签到任务（如果启用）
             if SIGNIN_ENABLED:
-                # 为监听器使用的账号也启动签到任务（使用监听器已有的客户端，避免数据库锁定）
-                from utils.signin_scheduler import SigninScheduler
                 from config.config import MONITOR_GROUPS
                 
                 if MONITOR_GROUPS:
-                    self.listener.signin_scheduler = SigninScheduler(self.listener.client, MONITOR_GROUPS)
-                    await self.listener.signin_scheduler.start()
-                    logger.info(f"✅ 监听器账号 '{self.listener.session_name}' 的签到任务已启动")
-                
-                # 为其他账号启动签到任务（排除监听器使用的 session，避免数据库锁定）
-                self.signin_manager = MultiAccountSigninManager()
-                await self.signin_manager.start(exclude_session=self.listener.session_name)
-                account_count = self.signin_manager.get_account_count()
-                if account_count > 0:
-                    logger.info(f"✅ 已为 {account_count} 个其他账号启动定时签到任务")
-                
-                # 统计总账号数
-                total_count = (1 if self.listener.signin_scheduler else 0) + account_count
-                if total_count > 0:
-                    logger.info(f"✅ 总计已为 {total_count} 个账号启动定时签到任务")
+                    # 从账号池中为所有账号启动签到任务（复用账号池中的客户端）
+                    if self.account_pool and len(self.account_pool.accounts) > 0:
+                        await self.account_pool.start_signin_for_all(MONITOR_GROUPS)
+                        account_count = len(self.account_pool.accounts)
+                        logger.info(f"✅ 已为账号池中所有 {account_count} 个账号启动定时签到任务")
+                    else:
+                        logger.warning("⚠️  账号池为空，无法启动签到任务")
                 else:
-                    logger.info("ℹ️  未找到已登录的账号，跳过签到任务")
+                    logger.warning("⚠️  未配置监控群组，无法启动签到任务")
             else:
                 logger.info("ℹ️  定时签到功能未启用")
             
@@ -93,12 +125,8 @@ class TelegramBotApplication:
             else:
                 logger.info("🤖 LLM 自动回复: 已禁用")
             if SIGNIN_ENABLED:
-                account_list = []
-                if self.listener.signin_scheduler:
-                    account_list.append(self.listener.session_name)
-                if self.signin_manager:
-                    account_list.extend(self.signin_manager.get_account_list())
-                if account_list:
+                if self.account_pool and len(self.account_pool.accounts) > 0:
+                    account_list = [acc[0] for acc in self.account_pool.accounts]
                     total_count = len(account_list)
                     logger.info(f"⏰ 定时签到: 运行中 ({total_count} 个账号)")
                     logger.info(f"   账号列表: {', '.join(account_list)}")
@@ -120,18 +148,9 @@ class TelegramBotApplication:
         try:
             logger.info("正在关闭应用...")
             
-            # 停止监听器的签到任务
-            if self.listener and self.listener.signin_scheduler:
-                await self.listener.signin_scheduler.stop()
-            
-            # 停止多账号签到管理器
-            if self.signin_manager:
-                await self.signin_manager.stop()
-            
-            # 断开 Telegram 连接
-            if self.listener and self.listener.client and self.listener.client.is_connected():
-                await self.listener.client.disconnect()
-                logger.info("✅ Telegram 连接已断开")
+            # 断开账号池中所有账号的连接（会自动停止签到任务）
+            if self.account_pool:
+                await self.account_pool.disconnect_all()
             
             logger.info("✅ 应用已完全关闭")
             

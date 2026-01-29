@@ -23,12 +23,13 @@ class MultiAccountSigninManager:
         self.schedulers = {}  # {session_name: SigninScheduler}
         self.is_running = False
     
-    async def start(self, exclude_session=None):
+    async def start(self, exclude_session=None, exclude_sessions=None):
         """
         启动所有账号的签到任务
         
         Args:
-            exclude_session: 要排除的 session 名称（通常是被 TelegramListener 使用的 session，避免数据库锁定）
+            exclude_session: 要排除的 session 名称（单个，兼容旧代码）
+            exclude_sessions: 要排除的 session 名称集合（多个，避免数据库锁定）
         """
         if not SIGNIN_ENABLED:
             logger.info("定时签到功能未启用")
@@ -40,11 +41,22 @@ class MultiAccountSigninManager:
             logger.warning("未找到任何 session 文件，无法启动签到任务")
             return
         
-        # 排除已被监听器使用的 session（避免数据库锁定）
+        # 处理排除的 session（支持单个或集合）
+        if exclude_sessions is None:
+            exclude_sessions = set()
         if exclude_session:
-            sessions = [s for s in sessions if s != exclude_session]
-            if exclude_session in list_available_sessions():
-                logger.info(f"ℹ️  跳过 session '{exclude_session}'（已被消息监听器使用，将使用监听器的客户端进行签到）")
+            exclude_sessions.add(exclude_session)
+        
+        # 排除指定的 session（避免数据库锁定）
+        if exclude_sessions:
+            original_count = len(sessions)
+            sessions = [s for s in sessions if s not in exclude_sessions]
+            excluded_count = original_count - len(sessions)
+            if excluded_count > 0:
+                logger.info(f"ℹ️  跳过 {excluded_count} 个 session（已被监听器或账号池使用）: {', '.join(sorted(exclude_sessions))}")
+        
+        # 确保排除的 session 不在列表中（双重检查）
+        sessions = [s for s in sessions if s not in exclude_sessions]
         
         if not sessions:
             logger.info("ℹ️  没有其他 session 需要启动签到任务")

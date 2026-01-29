@@ -21,18 +21,20 @@ from config.config import (
 )
 from utils.llm_util import get_llm_instance
 from utils.signin_scheduler import SigninScheduler
+from utils.reply_counter import ReplyCounter
 
 logger = logging.getLogger(__name__)
 
 class TelegramListener:
     """Telegram 消息监听器"""
     
-    def __init__(self, session_name=None):
+    def __init__(self, session_name=None, account_pool=None):
         """
         初始化监听器
         +447464736880
         Args:
             session_name: Session 名称，如果为 None 则会在启动时让用户选择或输入
+            account_pool: 账号池管理器（用于轮询回复）
         """
         validate_config()
         self.session_name = session_name
@@ -41,6 +43,8 @@ class TelegramListener:
         self.monitor_groups = MONITOR_GROUPS
         self.llm = None  # LLM 实例，延迟初始化
         self.signin_scheduler = None  # 签到调度器
+        self.reply_counter = None  # 回复计数器，延迟初始化（仅用于监听器账号）
+        self.account_pool = account_pool  # 账号池（用于轮询回复）
         
     def _select_or_create_session(self):
         """选择或创建 session"""
@@ -235,6 +239,18 @@ class TelegramListener:
             logger.info(f"已登录账号: {me.first_name} (@{me.username})")
             logger.info(f"账号 ID: {me.id}")
             
+            # 初始化回复计数器（需要 session_name）
+            if self.session_name:
+                try:
+                    self.reply_counter = ReplyCounter(self.session_name)
+                    current_count, max_count = self.reply_counter.get_count()
+                    logger.info(f"📊 回复计数: {current_count}/{max_count}")
+                except Exception as e:
+                    logger.warning(f"初始化回复计数器失败，将不限制回复数量: {e}")
+                    self.reply_counter = None
+            else:
+                logger.warning("Session 名称为空，无法初始化回复计数器")
+            
             # 注册消息处理器
             self._register_handlers()
             
@@ -248,6 +264,41 @@ class TelegramListener:
         except SessionPasswordNeededError:
             logger.error("需要两步验证密码，但密码输入失败")
             raise
+        except Exception as e:
+            logger.error(f"启动失败: {e}", exc_info=True)
+            raise
+    
+    async def start_with_existing_client(self):
+        """
+        使用已有的客户端启动监听器（从账号池中复用客户端）
+        注意：客户端必须已经连接
+        """
+        try:
+            if self.client is None:
+                raise ValueError("客户端未设置，无法启动监听器")
+            
+            # 检查客户端是否已连接
+            if not self.client.is_connected():
+                logger.warning("客户端未连接，尝试连接...")
+                await self.client.connect()
+            
+            # 检查是否已授权
+            if not await self.client.is_user_authorized():
+                raise ValueError("客户端未授权，无法启动监听器")
+            
+            # 获取当前用户信息
+            me = await self.client.get_me()
+            logger.info(f"已登录账号: {me.first_name} (@{me.username})")
+            logger.info(f"账号 ID: {me.id}")
+            
+            # 注册消息处理器
+            self._register_handlers()
+            
+            # 显示监听的群组
+            await self._list_monitor_groups()
+            
+            logger.info("开始监听消息...")
+            
         except Exception as e:
             logger.error(f"启动失败: {e}", exc_info=True)
             raise
@@ -342,28 +393,81 @@ class TelegramListener:
             # 获取当前用户信息（用于判断是否是自己发送的消息）
             me = await self.client.get_me()
             sender_id = getattr(sender, 'id', None)
+            sender_name = getattr(sender, 'first_name', '') or getattr(sender, 'username', '') or '未知'
             
-            # 过滤条件1: 忽略自己发送的消息
+            # 过滤条件1: 忽略自己发送的消息（包括监听器账号和账号池中的所有账号）
             if sender_id == me.id:
-                logger.debug("忽略自己发送的消息")
+                logger.info(f"⏭️  忽略监听器账号自己发送的消息 (发送者: {sender_name}, ID: {sender_id})")
+                return
+            
+            # 检查是否是账号池中的账号发送的消息
+            if self.account_pool and sender_id in self.account_pool.account_ids:
+                logger.info(f"⏭️  忽略账号池中账号发送的消息 (发送者: {sender_name}, ID: {sender_id}, 账号池IDs: {self.account_pool.account_ids})")
                 return
             
             # 过滤条件2: 只处理长度小于15个字的消息
             message_length = len(message_text.strip())
             if message_length >= 15:
-                logger.debug(f"消息长度 {message_length} >= 15，忽略处理")
+                logger.info(f"⏭️  消息长度 {message_length} >= 15，忽略处理")
                 return
             
             # 过滤条件3: 忽略包含"签到"关键词的消息
             if "签到" in message_text:
-                logger.debug("消息包含'签到'关键词，忽略处理")
+                logger.info(f"⏭️  消息包含'签到'关键词，忽略处理")
                 return
             
             # 过滤条件4: 忽略空消息
             if message_length == 0:
+                logger.info(f"⏭️  消息为空，忽略处理")
                 return
             
-            logger.info(f"📝 准备生成回复，消息长度: {message_length}")
+            logger.info(f"📝 准备生成回复，消息: '{message_text[:50]}', 长度: {message_length}, 发送者: {sender_name} (ID: {sender_id})")
+            
+            # 选择用于回复的账号（从账号池中轮询选择）
+            reply_account = None
+            if self.account_pool and len(self.account_pool.accounts) > 0:
+                # 使用账号池轮询选择账号
+                account_result = self.account_pool.get_next_account()
+                if account_result:
+                    reply_session_name, reply_client, reply_counter = account_result
+                    reply_account = {
+                        'session_name': reply_session_name,
+                        'client': reply_client,
+                        'reply_counter': reply_counter
+                    }
+                    logger.info(f"🔄 选择账号 '{reply_session_name}' 进行回复")
+                else:
+                    # 账号池中所有账号都达到上限，尝试使用监听器账号回复
+                    logger.warning("⚠️  账号池中所有账号都已达到回复上限，尝试使用监听器账号回复")
+                    if self.reply_counter:
+                        can_reply, current_count, max_count = self.reply_counter.can_reply()
+                        if can_reply:
+                            reply_account = {
+                                'session_name': self.session_name,
+                                'client': self.client,
+                                'reply_counter': self.reply_counter
+                            }
+                            logger.info(f"🔄 切换到监听器账号 '{self.session_name}' 进行回复 ({current_count}/{max_count})")
+                        else:
+                            logger.warning(f"⛔ 监听器账号 '{self.session_name}' 也已达到回复上限 ({current_count}/{max_count})，无法回复")
+                            return
+                    else:
+                        logger.warning("⚠️  监听器账号没有回复计数器，无法回复")
+                        return
+            else:
+                # 没有账号池，使用监听器自己的账号回复
+                if self.reply_counter:
+                    can_reply, current_count, max_count = self.reply_counter.can_reply()
+                    if not can_reply:
+                        logger.info(f"⛔ 账号 '{self.session_name}' 已达到回复上限 ({current_count}/{max_count})，跳过回复")
+                        return
+                    logger.debug(f"📊 当前回复计数: {current_count}/{max_count}")
+                
+                reply_account = {
+                    'session_name': self.session_name,
+                    'client': self.client,
+                    'reply_counter': self.reply_counter
+                }
             
             # 初始化 LLM（延迟初始化）
             if self.llm is None:
@@ -379,9 +483,19 @@ class TelegramListener:
                 reply_text = await self.llm.generate_reply(message_text)
                 
                 if reply_text:
-                    # 直接发送消息，不引用原消息
-                    await event.respond(reply_text)
-                    logger.info(f"✅ 已发送回复: {reply_text[:50]}...")
+                    # 使用选中的账号发送回复
+                    reply_client = reply_account['client']
+                    await reply_client.send_message(event.chat_id, reply_text)
+                    logger.info(f"✅ 已通过账号 '{reply_account['session_name']}' 发送回复: {reply_text[:50]}...")
+                    
+                    # 增加回复计数
+                    reply_counter = reply_account['reply_counter']
+                    if reply_counter:
+                        success, new_count, max_count = reply_counter.increment()
+                        if success:
+                            logger.info(f"📊 账号 '{reply_account['session_name']}' 回复计数已更新: {new_count}/{max_count}")
+                        else:
+                            logger.warning("回复计数更新失败，但消息已发送")
                 else:
                     logger.warning("LLM 返回空回复，跳过发送")
                     
