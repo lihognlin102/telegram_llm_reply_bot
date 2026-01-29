@@ -112,12 +112,13 @@ class ReplyCounter:
                     result = cursor.fetchone()
                     
                     if result is None:
-                        # 创建新记录
+                        # 创建新记录（设置 last_reset_date 为今天）
+                        today = datetime.now().date()
                         cursor.execute("""
                             INSERT INTO account_reply_count 
-                            (session_name, reply_count, max_replies) 
-                            VALUES (%s, 0, %s)
-                        """, (self.session_name, self.max_replies))
+                            (session_name, reply_count, max_replies, last_reset_date) 
+                            VALUES (%s, 0, %s, %s)
+                        """, (self.session_name, self.max_replies, today))
                         conn.commit()
                         logger.info(f"账号 '{self.session_name}' 的回复计数记录已初始化")
                     else:
@@ -136,9 +137,45 @@ class ReplyCounter:
             logger.error(f"初始化账号记录失败: {e}", exc_info=True)
             raise
     
+    def _check_and_reset_daily(self, cursor):
+        """
+        检查并执行每日重置（如果日期已变化）
+        
+        Args:
+            cursor: 数据库游标
+        """
+        today = datetime.now().date()
+        
+        cursor.execute("""
+            SELECT last_reset_date, reply_count
+            FROM account_reply_count 
+            WHERE session_name = %s
+        """, (self.session_name,))
+        result = cursor.fetchone()
+        
+        if result and result['last_reset_date']:
+            last_reset_date = result['last_reset_date']
+            # 如果上次重置日期不是今天，则重置计数
+            if last_reset_date != today:
+                cursor.execute("""
+                    UPDATE account_reply_count 
+                    SET reply_count = 0,
+                        last_reset_date = %s,
+                        updated_at = NOW()
+                    WHERE session_name = %s
+                """, (today, self.session_name))
+                logger.info(f"账号 '{self.session_name}' 的回复计数已重置（每日重置，上次重置: {last_reset_date}）")
+        elif result and result['last_reset_date'] is None:
+            # 如果 last_reset_date 为 NULL，设置为今天
+            cursor.execute("""
+                UPDATE account_reply_count 
+                SET last_reset_date = %s
+                WHERE session_name = %s
+            """, (today, self.session_name))
+    
     def can_reply(self):
         """
-        检查是否可以回复
+        检查是否可以回复（会自动检查并执行每日重置）
         
         Returns:
             tuple: (是否可以回复, 当前计数, 最大计数)
@@ -148,7 +185,7 @@ class ReplyCounter:
             try:
                 with conn.cursor() as cursor:
                     cursor.execute("""
-                        SELECT reply_count, max_replies 
+                        SELECT reply_count, max_replies, last_reset_date
                         FROM account_reply_count 
                         WHERE session_name = %s
                     """, (self.session_name,))
@@ -158,6 +195,18 @@ class ReplyCounter:
                         # 如果记录不存在，初始化它
                         self._initialize_account()
                         return True, 0, self.max_replies
+                    
+                    # 检查并执行每日重置
+                    self._check_and_reset_daily(cursor)
+                    conn.commit()
+                    
+                    # 重新查询（重置后可能计数已变化）
+                    cursor.execute("""
+                        SELECT reply_count, max_replies
+                        FROM account_reply_count 
+                        WHERE session_name = %s
+                    """, (self.session_name,))
+                    result = cursor.fetchone()
                     
                     current_count = result['reply_count']
                     max_replies = result['max_replies']
@@ -173,7 +222,7 @@ class ReplyCounter:
     
     def increment(self):
         """
-        增加回复计数
+        增加回复计数（会自动检查并执行每日重置）
         
         Returns:
             tuple: (是否成功, 当前计数, 最大计数)
@@ -182,13 +231,29 @@ class ReplyCounter:
             conn = self._get_connection()
             try:
                 with conn.cursor() as cursor:
+                    # 先检查并执行每日重置
+                    cursor.execute("""
+                        SELECT last_reset_date
+                        FROM account_reply_count 
+                        WHERE session_name = %s
+                    """, (self.session_name,))
+                    result = cursor.fetchone()
+                    
+                    if result:
+                        self._check_and_reset_daily(cursor)
+                    else:
+                        # 如果记录不存在，创建它
+                        self._initialize_account()
+                    
                     # 使用原子操作增加计数
+                    today = datetime.now().date()
                     cursor.execute("""
                         UPDATE account_reply_count 
                         SET reply_count = reply_count + 1,
+                            last_reset_date = %s,
                             updated_at = NOW()
                         WHERE session_name = %s
-                    """, (self.session_name,))
+                    """, (today, self.session_name))
                     
                     if cursor.rowcount == 0:
                         # 如果记录不存在，创建它
@@ -196,9 +261,10 @@ class ReplyCounter:
                         cursor.execute("""
                             UPDATE account_reply_count 
                             SET reply_count = reply_count + 1,
+                                last_reset_date = %s,
                                 updated_at = NOW()
                             WHERE session_name = %s
-                        """, (self.session_name,))
+                        """, (today, self.session_name))
                     
                     # 获取更新后的计数
                     cursor.execute("""
