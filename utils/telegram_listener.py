@@ -469,6 +469,13 @@ class TelegramListener:
                     'reply_counter': self.reply_counter
                 }
             
+            # 在调用LLM之前，再次确认账号是否可以回复（防止竞态条件）
+            if reply_account['reply_counter']:
+                can_reply, current_count, max_count = reply_account['reply_counter'].can_reply()
+                if not can_reply:
+                    logger.info(f"⛔ 账号 '{reply_account['session_name']}' 已达到回复上限 ({current_count}/{max_count})，跳过LLM调用")
+                    return
+            
             # 初始化 LLM（延迟初始化）
             if self.llm is None:
                 try:
@@ -483,19 +490,22 @@ class TelegramListener:
                 reply_text = await self.llm.generate_reply(message_text)
                 
                 if reply_text:
-                    # 使用选中的账号发送回复
-                    reply_client = reply_account['client']
-                    await reply_client.send_message(event.chat_id, reply_text)
-                    logger.info(f"✅ 已通过账号 '{reply_account['session_name']}' 发送回复: {reply_text[:50]}...")
+                    # 尝试发送回复（如果账号无法访问群组，会尝试其他账号）
+                    success = await self._try_send_reply(
+                        reply_account, 
+                        event.chat_id, 
+                        reply_text
+                    )
                     
-                    # 增加回复计数
-                    reply_counter = reply_account['reply_counter']
-                    if reply_counter:
-                        success, new_count, max_count = reply_counter.increment()
-                        if success:
-                            logger.info(f"📊 账号 '{reply_account['session_name']}' 回复计数已更新: {new_count}/{max_count}")
-                        else:
-                            logger.warning("回复计数更新失败，但消息已发送")
+                    if success:
+                        # 增加回复计数
+                        reply_counter = reply_account['reply_counter']
+                        if reply_counter:
+                            success, new_count, max_count = reply_counter.increment()
+                            if success:
+                                logger.info(f"📊 账号 '{reply_account['session_name']}' 回复计数已更新: {new_count}/{max_count}")
+                            else:
+                                logger.warning("回复计数更新失败，但消息已发送")
                 else:
                     logger.warning("LLM 返回空回复，跳过发送")
                     
@@ -504,6 +514,36 @@ class TelegramListener:
                 
         except Exception as e:
             logger.error(f"处理消息时出错: {e}", exc_info=True)
+    
+    async def _try_send_reply(self, initial_account, chat_id, reply_text):
+        """
+        尝试发送回复，如果账号未加入群组，则直接跳过
+        
+        Args:
+            initial_account: 选中的账号 {'session_name': str, 'client': TelegramClient, 'reply_counter': ReplyCounter}
+            chat_id: 聊天 ID
+            reply_text: 回复文本
+        
+        Returns:
+            bool: 是否成功发送
+        """
+        try:
+            await initial_account['client'].send_message(chat_id, reply_text)
+            logger.info(f"✅ 已通过账号 '{initial_account['session_name']}' 发送回复: {reply_text[:50]}...")
+            return True
+        except ValueError as e:
+            # 账号无法访问该群组/频道（未加入）
+            error_msg = str(e)
+            if "Could not find the input entity" in error_msg:
+                logger.info(f"⏭️  账号 '{initial_account['session_name']}' 未加入该群组/频道，跳过回复")
+                return False
+            else:
+                # 其他 ValueError，直接抛出
+                raise
+        except Exception as e:
+            # 其他错误，记录并返回失败
+            logger.error(f"账号 '{initial_account['session_name']}' 发送失败: {e}")
+            return False
     
     async def _list_monitor_groups(self):
         """列出并验证监听的聊天（群组/频道/私聊）"""
@@ -521,8 +561,8 @@ class TelegramListener:
         for group_identifier in self.monitor_groups:
             try:
                 # 尝试直接使用标识符
-                try:
-                    entity = await self.client.get_entity(group_identifier)
+            try:
+                entity = await self.client.get_entity(group_identifier)
                 except ValueError:
                     # 如果直接获取失败，可能是私聊，尝试通过 ID 获取
                     if group_identifier.lstrip('-').isdigit():
@@ -578,7 +618,7 @@ class TelegramListener:
                             supergroup_id = f"-100{test_id}"
                             try:
                                 entity = await self.client.get_entity(int(supergroup_id))
-                                title = getattr(entity, 'title', None) or getattr(entity, 'username', None) or str(entity.id)
+                title = getattr(entity, 'title', None) or getattr(entity, 'username', None) or str(entity.id)
                                 chat_type = "👥 群组" if hasattr(entity, 'megagroup') else "📢 频道"
                                 logger.info(f"  ✓ {chat_type}: {title} (ID: {entity.id})")
                                 logger.info(f"    提示: 原始配置 '{group_identifier}' 已自动转换为 '{entity.id}'")
@@ -643,7 +683,7 @@ async def main():
                 await listener.signin_scheduler.stop()
             
             if listener.client and listener.client.is_connected():
-              await listener.client.disconnect()
+            await listener.client.disconnect()
             logger.info("已断开连接")
         except Exception as e:
             logger.error(f"关闭连接时出错: {e}")
