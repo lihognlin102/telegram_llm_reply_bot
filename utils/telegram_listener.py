@@ -561,7 +561,6 @@ class TelegramListener:
         for group_identifier in self.monitor_groups:
             try:
                 # 尝试直接使用标识符
-            try:
                 entity = await self.client.get_entity(group_identifier)
                 except ValueError:
                     # 如果直接获取失败，可能是私聊，尝试通过 ID 获取
