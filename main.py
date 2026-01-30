@@ -171,16 +171,10 @@ async def main():
         logger.error(f"应用异常退出: {e}")
     finally:
         try:
-            # 停止签到调度器
-            if app.listener and app.listener.signin_scheduler:
-                await app.listener.signin_scheduler.stop()
-            # 断开连接
-            if app.listener and app.listener.client and app.listener.client.is_connected():
-                # telethon 会自动保存 session，无需手动保存
-                await app.listener.client.disconnect()
-                logger.info("已断开连接")
+            # 停止应用（会自动断开所有连接和停止所有任务）
+            await app.stop()
         except Exception as e:
-            logger.error(f"关闭连接时出错: {e}", exc_info=True)
+            logger.error(f"关闭应用时出错: {e}", exc_info=True)
 
 
 if __name__ == '__main__':

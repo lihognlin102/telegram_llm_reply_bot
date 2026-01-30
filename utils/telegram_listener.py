@@ -559,103 +559,83 @@ class TelegramListener:
         logger.info("\n正在验证聊天...")
         valid_groups = []
         for group_identifier in self.monitor_groups:
+            entity = None
             try:
                 # 尝试直接使用标识符
                 entity = await self.client.get_entity(group_identifier)
-                except ValueError:
-                    # 如果直接获取失败，可能是私聊，尝试通过 ID 获取
-                    if group_identifier.lstrip('-').isdigit():
-                        try:
-                            # 尝试作为用户 ID 获取
-                            entity = await self.client.get_entity(int(group_identifier))
-                        except:
-                            # 如果还是失败，尝试负数格式
-                            if not group_identifier.startswith('-'):
-                                try:
-                                    entity = await self.client.get_entity(int(f"-{group_identifier}"))
-                                except:
-                                    raise ValueError(f"无法通过 ID {group_identifier} 获取实体")
-                            else:
-                                raise
-                    else:
-                        raise
-                
-                title = getattr(entity, 'title', None) or getattr(entity, 'username', None) or str(entity.id)
-                entity_id = entity.id
-                
-                # 判断聊天类型并显示信息
-                if hasattr(entity, 'megagroup') and entity.megagroup:
-                    chat_type = "👥 群组"
-                    # 超级群组 ID 应该是负数格式
-                    if entity_id > 0:
-                        corrected_id = f"-100{entity_id}"
-                        logger.info(f"  ✓ {chat_type}: {title}")
-                        logger.info(f"    当前 ID: {entity_id}")
-                        logger.info(f"    建议使用: {corrected_id} 或 @{getattr(entity, 'username', 'N/A')}")
-                    else:
-                        logger.info(f"  ✓ {chat_type}: {title} (ID: {entity_id})")
-                elif hasattr(entity, 'broadcast') and entity.broadcast:
-                    chat_type = "📢 频道"
-                    logger.info(f"  ✓ {chat_type}: {title} (ID: {entity_id})")
-                else:
-                    chat_type = "💬 私聊"
-                    logger.info(f"  ✓ {chat_type}: {title} (ID: {entity_id})")
-                    logger.info(f"    提示: 私聊 ID 可以是正数或负数格式")
-                
-                valid_groups.append(group_identifier)
-                
-            except ValueError as e:
-                # 可能是 ID 格式问题，尝试通过对话框列表查找
-                found = False
-                try:
-                    # 如果是纯数字，尝试不同的查找方式
-                    if group_identifier.lstrip('-').isdigit():
-                        test_id = int(group_identifier)
-                        
-                        # 方法1: 尝试超级群组格式（-100 + ID）
-                        if test_id > 0:
-                            supergroup_id = f"-100{test_id}"
+            except ValueError:
+                # 如果直接获取失败，可能是私聊，尝试通过 ID 获取
+                if group_identifier.lstrip('-').isdigit():
+                    try:
+                        # 尝试作为用户 ID 获取
+                        entity = await self.client.get_entity(int(group_identifier))
+                    except:
+                        # 如果还是失败，尝试负数格式
+                        if not group_identifier.startswith('-'):
                             try:
-                                entity = await self.client.get_entity(int(supergroup_id))
-                title = getattr(entity, 'title', None) or getattr(entity, 'username', None) or str(entity.id)
-                                chat_type = "👥 群组" if hasattr(entity, 'megagroup') else "📢 频道"
-                                logger.info(f"  ✓ {chat_type}: {title} (ID: {entity.id})")
-                                logger.info(f"    提示: 原始配置 '{group_identifier}' 已自动转换为 '{entity.id}'")
-                                valid_groups.append(str(entity.id))
-                                found = True
+                                entity = await self.client.get_entity(int(f"-{group_identifier}"))
                             except:
                                 pass
-                        
-                        # 方法2: 通过对话框列表查找（适用于私聊）
-                        if not found:
-                            try:
-                                dialogs = await self.client.get_dialogs()
-                                for dialog in dialogs:
-                                    if abs(dialog.entity.id) == abs(test_id):
-                                        entity = dialog.entity
-                                        title = getattr(entity, 'title', None) or getattr(entity, 'first_name', None) or str(entity.id)
-                                        chat_type = "💬 私聊"
-                                        logger.info(f"  ✓ {chat_type}: {title} (ID: {entity.id})")
-                                        logger.info(f"    提示: 通过对话框列表找到匹配的聊天")
-                                        valid_groups.append(str(entity.id))
-                                        found = True
-                                        break
-                            except Exception as dialog_error:
-                                logger.debug(f"通过对话框列表查找失败: {dialog_error}")
-                except:
-                    pass
                 
-                if not found:
-                    logger.warning(f"  ⚠️  验证时无法直接访问 '{group_identifier}': {e}")
-                    logger.warning(f"    提示: 这可能是私聊，验证时无法直接获取，但监听时仍会正常工作")
-                    logger.warning(f"    程序会继续运行，实际消息事件中包含的聊天信息可以正常匹配")
-                
-            except Exception as e:
-                logger.warning(f"  ✗ 无法访问 '{group_identifier}': {e}")
-                logger.warning(f"    提示: 请确保:")
-                logger.warning(f"    1. ID 格式正确（群组通常是负数，如 -1001234567890；私聊可以是正数或负数）")
-                logger.warning(f"    2. 你已加入该聊天或已添加该联系人")
-                logger.warning(f"    3. 使用 'list_user.py' 查看所有聊天及其 ID")
+                # 如果还是失败，尝试通过对话框列表查找
+                if entity is None:
+                    try:
+                        if group_identifier.lstrip('-').isdigit():
+                            test_id = int(group_identifier)
+                            
+                            # 方法1: 尝试超级群组格式（-100 + ID）
+                            if test_id > 0:
+                                supergroup_id = f"-100{test_id}"
+                                try:
+                                    entity = await self.client.get_entity(int(supergroup_id))
+                                except:
+                                    pass
+                            
+                            # 方法2: 通过对话框列表查找（适用于私聊）
+                            if entity is None:
+                                try:
+                                    dialogs = await self.client.get_dialogs()
+                                    for dialog in dialogs:
+                                        if abs(dialog.entity.id) == abs(test_id):
+                                            entity = dialog.entity
+                                            break
+                                except Exception as dialog_error:
+                                    logger.debug(f"通过对话框列表查找失败: {dialog_error}")
+                    except:
+                        pass
+            
+            # 如果成功获取到实体，处理并显示信息
+            if entity is not None:
+                try:
+                    title = getattr(entity, 'title', None) or getattr(entity, 'username', None) or getattr(entity, 'first_name', None) or str(entity.id)
+                    entity_id = entity.id
+                    
+                    # 判断聊天类型并显示信息
+                    if hasattr(entity, 'megagroup') and entity.megagroup:
+                        chat_type = "👥 群组"
+                        # 超级群组 ID 应该是负数格式
+                        if entity_id > 0:
+                            corrected_id = f"-100{entity_id}"
+                            logger.info(f"  ✓ {chat_type}: {title}")
+                            logger.info(f"    当前 ID: {entity_id}")
+                            logger.info(f"    建议使用: {corrected_id} 或 @{getattr(entity, 'username', 'N/A')}")
+                        else:
+                            logger.info(f"  ✓ {chat_type}: {title} (ID: {entity_id})")
+                    elif hasattr(entity, 'broadcast') and entity.broadcast:
+                        chat_type = "📢 频道"
+                        logger.info(f"  ✓ {chat_type}: {title} (ID: {entity_id})")
+                    else:
+                        chat_type = "💬 私聊"
+                        logger.info(f"  ✓ {chat_type}: {title} (ID: {entity_id})")
+                        logger.info(f"    提示: 私聊 ID 可以是正数或负数格式")
+                    
+                    valid_groups.append(group_identifier)
+                except Exception as e:
+                    logger.warning(f"  ⚠️  处理实体信息时出错 '{group_identifier}': {e}")
+            else:
+                logger.warning(f"  ⚠️  验证时无法直接访问 '{group_identifier}'")
+                logger.warning(f"    提示: 这可能是私聊，验证时无法直接获取，但监听时仍会正常工作")
+                logger.warning(f"    程序会继续运行，实际消息事件中包含的聊天信息可以正常匹配")
         
         if valid_groups:
             logger.info(f"\n✅ 成功验证 {len(valid_groups)}/{len(self.monitor_groups)} 个群组")
@@ -682,7 +662,7 @@ async def main():
                 await listener.signin_scheduler.stop()
             
             if listener.client and listener.client.is_connected():
-            await listener.client.disconnect()
+                await listener.client.disconnect()
             logger.info("已断开连接")
         except Exception as e:
             logger.error(f"关闭连接时出错: {e}")
