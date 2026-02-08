@@ -351,24 +351,26 @@ class TelegramListener:
                     should_monitor = True
                 
                 if should_monitor:
-                    # 记录消息信息
-                    sender_name = getattr(sender, 'first_name', '') or getattr(sender, 'username', '') or '未知'
-                    message_text = message.message or '[媒体/贴纸/其他]'
+                    # 只有在 LLM 功能启用时才打印消息日志，避免刷屏
+                    if LLM_ENABLED:
+                        # 记录消息信息
+                        sender_name = getattr(sender, 'first_name', '') or getattr(sender, 'username', '') or '未知'
+                        message_text = message.message or '[媒体/贴纸/其他]'
+                        
+                        # 判断聊天类型
+                        if getattr(chat, 'megagroup', False):
+                            chat_type = "👥 群组"
+                        elif getattr(chat, 'broadcast', False):
+                            chat_type = "📢 频道"
+                        else:
+                            chat_type = "💬 私聊"
+                        
+                        logger.info(f"📨 收到消息 [{chat_type}]")
+                        logger.info(f"   聊天: {chat_title} (ID: {chat_id})")
+                        logger.info(f"   发送者: {sender_name}")
+                        logger.info(f"   内容: {message_text[:100]}")  # 只显示前100个字符
                     
-                    # 判断聊天类型
-                    if getattr(chat, 'megagroup', False):
-                        chat_type = "👥 群组"
-                    elif getattr(chat, 'broadcast', False):
-                        chat_type = "📢 频道"
-                    else:
-                        chat_type = "💬 私聊"
-                    
-                    logger.info(f"📨 收到消息 [{chat_type}]")
-                    logger.info(f"   聊天: {chat_title} (ID: {chat_id})")
-                    logger.info(f"   发送者: {sender_name}")
-                    logger.info(f"   内容: {message_text[:100]}")  # 只显示前100个字符
-                    
-                    # 这里后续可以添加消息处理逻辑
+                    # 处理消息（如果 LLM_ENABLED=false，_handle_message 会直接返回）
                     await self._handle_message(event, chat, sender, message)
                 
             except Exception as e:
